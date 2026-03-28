@@ -1,18 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
-import 'package:media_kit/media_kit.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:synctv_app/models/watch_together_models.dart';
 import 'package:synctv_app/models/simple_proto.dart';
 import 'package:synctv_app/services/watch_together_service.dart';
-import 'package:synctv_app/utils/message_utils.dart';
-import 'package:synctv_app/utils/chat_utils.dart';
 import 'package:synctv_app/widgets/add_movie_dialog.dart';
 import 'package:synctv_app/widgets/custom_video_player.dart';
 import 'package:synctv_app/managers/webrtc_manager.dart';
@@ -28,7 +24,9 @@ class LargeScreenRoom extends StatefulWidget {
 }
 
 class _LargeScreenRoomState extends State<LargeScreenRoom> {
+  // 使用原生 ExoPlayer（Android）/ video_player 后端
   VideoPlayerController? _videoPlayerController;
+  String _currentUrl = '';
   final ScrollController _chatScrollController = ScrollController();
   final ScrollController _movieScrollController = ScrollController();
   final List<Map<String, dynamic>> _messages = [];
@@ -282,21 +280,24 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
     if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) return;
     _isSyncing = true;
     try {
-      if ((_videoPlayerController!.value.playbackSpeed - playbackRate).abs() > 0.1) {
-        await _videoPlayerController!.setPlaybackSpeed(playbackRate);
+      final ctrl = _videoPlayerController!;
+      // 调整倍速
+      if ((ctrl.value.playbackSpeed - playbackRate).abs() > 0.05) {
+        await ctrl.setPlaybackSpeed(playbackRate);
         _lastRate = playbackRate;
       }
-      if (!isPlaying && _videoPlayerController!.value.isPlaying) {
-        await _videoPlayerController!.pause();
+      // seek（误差超过2秒才 seek）
+      final currentPos = ctrl.value.position.inMilliseconds / 1000.0;
+      if ((currentPos - currentTime).abs() > 2.0) {
+        await ctrl.seekTo(Duration(milliseconds: (currentTime * 1000).toInt()));
+        _lastPosition = currentTime;
+      }
+      // 暂停 / 播放
+      if (!isPlaying && ctrl.value.isPlaying) {
+        await ctrl.pause();
         _lastPlaying = false;
-      }
-      final currentPos = _videoPlayerController!.value.position.inMilliseconds / 1000.0;
-      if ((currentPos - currentTime).abs() > 2.0) { // Looser sync for TV
-         await _videoPlayerController!.seekTo(Duration(milliseconds: (currentTime * 1000).toInt()));
-         _lastPosition = currentTime; 
-      }
-      if (isPlaying && !_videoPlayerController!.value.isPlaying) {
-        await _videoPlayerController!.play();
+      } else if (isPlaying && !ctrl.value.isPlaying) {
+        await ctrl.play();
         _lastPlaying = true;
       }
     } catch (_) {} finally {
@@ -307,22 +308,24 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
   }
 
   void _videoListener() {
-    if (_isSyncing || _videoPlayerController == null || !_videoPlayerController!.value.isInitialized) return;
-    final value = _videoPlayerController!.value;
-    final isPlaying = value.isPlaying;
-    final position = value.position.inMilliseconds / 1000.0;
-    final rate = value.playbackSpeed;
+    if (_isSyncing) return;
+    if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) return;
+    if (mounted) setState(() {});
+    final ctrl = _videoPlayerController!;
+    final isPlaying = ctrl.value.isPlaying;
+    final position = ctrl.value.position.inMilliseconds / 1000.0;
+    final rate = ctrl.value.playbackSpeed;
 
     bool changed = false;
     if (isPlaying != _lastPlaying) { _lastPlaying = isPlaying; changed = true; }
-    if (rate != _lastRate) { _lastRate = rate; changed = true; }
+    if ((rate - _lastRate).abs() > 0.05) { _lastRate = rate; changed = true; }
     if ((position - _lastPosition).abs() > 2.0) { _lastPosition = position; changed = true; } else { _lastPosition = position; }
 
     if (changed) {
       if (_updateDebounce?.isActive ?? false) _updateDebounce!.cancel();
       _updateDebounce = Timer(const Duration(milliseconds: 1000), () {
         if (mounted && !_isSyncing) {
-          _sendStatus(value.isPlaying, value.position.inMilliseconds / 1000.0, value.playbackSpeed);
+          _sendStatus(isPlaying, position, rate);
         }
       });
     }
@@ -348,14 +351,41 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
           String newUrl = status.movie!.url;
           if (newUrl.startsWith('/')) newUrl = '${WatchTogetherService.baseUrl.replaceAll('/api', '')}$newUrl';
 
-          if (_videoPlayerController == null || _videoPlayerController!.dataSource != newUrl) {
-             await _initVideo(newUrl, headers: status.movie!.headers);
+          final isNewMovie = _currentUrl != newUrl;
+          if (isNewMovie) {
+            await _initVideo(newUrl, headers: status.movie!.headers);
           }
-          
+
+          // 初始化后立即同步播放状态
+          if (_videoPlayerController != null && _videoPlayerController!.value.isInitialized) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _videoPlayerController != null && _videoPlayerController!.value.isInitialized) {
+                _performSync(status.isPlaying, status.currentTime, status.playbackRate);
+              }
+            });
+          } else {
+            _performSync(status.isPlaying, status.currentTime, status.playbackRate);
+          }
+
+          String? streamUrl = status.movie!.streamDanmu;
+          if (streamUrl != null && streamUrl.startsWith('/')) {
+            streamUrl = '${WatchTogetherService.baseUrl.replaceAll('/api', '')}$streamUrl';
+          }
+
           String? danmuUrl = status.movie!.danmu;
           if (danmuUrl != null && danmuUrl.startsWith('/')) danmuUrl = '${WatchTogetherService.baseUrl.replaceAll('/api', '')}$danmuUrl';
-          
-          _danmakuController.updateConfig(danmakuUrl: danmuUrl, controller: _videoPlayerController);
+
+          _danmakuController.updateConfig(
+            danmakuUrl: danmuUrl,
+            streamDanmakuUrl: streamUrl,
+            controller: _videoPlayerController,
+          );
+        } else {
+          if (_videoPlayerController != null) {
+            _disposeVideoController();
+            _currentUrl = '';
+            setState(() {});
+          }
         }
       }
     } catch (_) {}
@@ -363,55 +393,38 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
 
   Future<void> _initVideo(String url, {Map<String, String>? headers}) async {
     if (url.isEmpty) return;
-    final newController = VideoPlayerController.networkUrl(Uri.parse(url), httpHeaders: headers ?? {});
+    _currentUrl = url;
+
+    final newController = VideoPlayerController.networkUrl(
+      Uri.parse(url),
+      httpHeaders: headers ?? {},
+    );
+
     try {
       await newController.initialize();
-      if (!mounted) { newController.dispose(); return; }
+
+      if (!mounted) {
+        newController.dispose();
+        return;
+      }
+
       _disposeVideoController();
       _videoPlayerController = newController;
-      // 4K 播放优化：通过 media_kit NativePlayer 注入 mpv 底层参数
-      await _applyMpvOptimizations(newController);
       _videoPlayerController!.addListener(_videoListener);
-      if (mounted) setState(() {});
-      // Auto play on TV
-      _videoPlayerController!.play();
-    } catch (_) { newController.dispose(); }
-  }
+      await _videoPlayerController!.setLooping(false);
 
-  /// 通过 media_kit NativePlayer 设置 mpv 参数优化 4K 播放
-  Future<void> _applyMpvOptimizations(VideoPlayerController controller) async {
-    try {
-      // video_player_media_kit 将 platform 暴露为 NativePlayer
-      final player = (controller as dynamic).player;
-      if (player == null) return;
-      final native = player.platform;
-      if (native is NativePlayer) {
-        // 硬件解码：强制使用 MediaCodec（Android TV 最佳兼容性）
-        await native.setProperty('hwdec', 'mediacodec-copy');
-        // 增大网络缓冲区，防止 4K 高码率卡顿
-        await native.setProperty('cache', 'yes');
-        await native.setProperty('demuxer-max-bytes', '100MiB');
-        await native.setProperty('demuxer-max-back-bytes', '50MiB');
-        // 网络超时
-        await native.setProperty('network-timeout', '10');
-        // 视频同步：audio 模式最省资源，避免 TV 芯片卡帧
-        await native.setProperty('video-sync', 'audio');
-        // 丢帧策略：轻微卡帧时自动跳帧追赶
-        await native.setProperty('framedrop', 'vo');
-        // 降低视频输出延迟
-        await native.setProperty('video-latency-hacks', 'yes');
-        debugPrint('mpv 4K优化参数已应用');
-      }
+      if (mounted) setState(() {});
     } catch (e) {
-      debugPrint('mpv优化参数设置失败（非致命）: $e');
+      newController.dispose();
+      debugPrint('Video init error: $e');
     }
   }
 
   void _disposeVideoController() {
+    _updateDebounce?.cancel();
     _videoPlayerController?.removeListener(_videoListener);
     _videoPlayerController?.dispose();
     _videoPlayerController = null;
-    _updateDebounce?.cancel();
   }
 
   @override

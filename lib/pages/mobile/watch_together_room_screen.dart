@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
@@ -138,6 +139,7 @@ class _WatchTogetherRoomScreenState extends State<WatchTogetherRoomScreen> with 
       _fetchMovies(),
     ]).catchError((e) {
       debugPrint('Background data fetch error: $e');
+      return <void>[];
     });
   }
 
@@ -568,8 +570,13 @@ class _WatchTogetherRoomScreenState extends State<WatchTogetherRoomScreen> with 
 
           if (_videoPlayerController == null || _videoPlayerController!.dataSource != newUrl) {
              await _initVideo(newUrl, headers: status.movie!.headers);
+             // 等待下一帧 widget 树渲染完成后再执行同步，避免画面未渲染就 seek/play 导致黑屏
              if (mounted && _videoPlayerController != null && _videoPlayerController!.value.isInitialized) {
-                _performSync(status.isPlaying, status.currentTime, status.playbackRate);
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted && _videoPlayerController != null && _videoPlayerController!.value.isInitialized) {
+                    _performSync(status.isPlaying, status.currentTime, status.playbackRate);
+                  }
+                });
              }
           } else {
              _performSync(status.isPlaying, status.currentTime, status.playbackRate);
@@ -640,6 +647,8 @@ class _WatchTogetherRoomScreenState extends State<WatchTogetherRoomScreen> with 
   }
 
   Future<void> _applyMpvOptimizations(VideoPlayerController controller) async {
+    // Android 使用原生 ExoPlayer，无需也无法设置 mpv 参数
+    if (Platform.isAndroid) return;
     try {
       final player = (controller as dynamic).player;
       if (player == null) return;
@@ -891,7 +900,7 @@ class _WatchTogetherRoomScreenState extends State<WatchTogetherRoomScreen> with 
 
   void _toggleFullScreen() {
     if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) return;
-    
+
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => CustomVideoPlayer(
@@ -899,7 +908,15 @@ class _WatchTogetherRoomScreenState extends State<WatchTogetherRoomScreen> with 
           title: _currentStatus?.movie?.name ?? '未知影片',
           danmakuController: _danmakuController,
           subtitles: _currentStatus?.movie?.subtitles,
-          onToggleFullScreen: () => Navigator.of(context).pop(),
+          onToggleFullScreen: () {
+            // 退出全屏前恢复竖屏方向和系统 UI，避免返回后黑屏
+            SystemChrome.setPreferredOrientations([
+              DeviceOrientation.portraitUp,
+              DeviceOrientation.portraitDown,
+            ]);
+            SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+            Navigator.of(context).pop();
+          },
           onSync: _handleSync,
           onSendDanmaku: _sendDanmaku,
           isFullScreen: true,
