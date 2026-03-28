@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:synctv_app/models/watch_together_models.dart';
@@ -367,11 +369,38 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
       if (!mounted) { newController.dispose(); return; }
       _disposeVideoController();
       _videoPlayerController = newController;
+      // 4K 播放优化：通过 media_kit NativePlayer 注入 mpv 底层参数
+      await _applyMpvOptimizations(newController);
       _videoPlayerController!.addListener(_videoListener);
       if (mounted) setState(() {});
       // Auto play on TV
       _videoPlayerController!.play();
     } catch (_) { newController.dispose(); }
+  }
+
+  /// 通过 media_kit NativePlayer 设置 mpv 参数优化 4K 播放
+  Future<void> _applyMpvOptimizations(VideoPlayerController controller) async {
+    try {
+      // video_player_media_kit 将 platform 暴露为 NativePlayer
+      final player = (controller as dynamic).player;
+      if (player == null) return;
+      final native = player.platform;
+      if (native is NativePlayer) {
+        // 硬件解码：自动选择最优解码器（Android MediaCodec / iOS VideoToolbox / Windows D3D11）
+        await native.setProperty('hwdec', 'auto-safe');
+        // 增大网络缓冲区，防止 4K 高码率卡顿
+        await native.setProperty('cache', 'yes');
+        await native.setProperty('demuxer-max-bytes', '50MiB');
+        await native.setProperty('demuxer-max-back-bytes', '25MiB');
+        // 网络超时设置（毫秒）
+        await native.setProperty('network-timeout', '10');
+        // 视频同步模式：使用显示帧时间，减少卡帧
+        await native.setProperty('video-sync', 'display-resample');
+        debugPrint('mpv 4K优化参数已应用');
+      }
+    } catch (e) {
+      debugPrint('mpv优化参数设置失败（非致命）: $e');
+    }
   }
 
   void _disposeVideoController() {

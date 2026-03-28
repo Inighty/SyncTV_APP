@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutter/services.dart';
@@ -611,17 +612,18 @@ class _WatchTogetherRoomScreenState extends State<WatchTogetherRoomScreen> with 
 
     try {
       await newController.initialize();
-      
+
       if (!mounted) {
         newController.dispose();
         return;
       }
 
       _disposeVideoController();
-      
+
       _videoPlayerController = newController;
-      _videoPlayerController!.addListener(_videoListener); // Add listener
-      
+      await _applyMpvOptimizations(newController);
+      _videoPlayerController!.addListener(_videoListener);
+
       if (mounted) setState(() {});
     } catch (e) {
       newController.dispose();
@@ -631,10 +633,29 @@ class _WatchTogetherRoomScreenState extends State<WatchTogetherRoomScreen> with 
   }
 
   void _disposeVideoController() {
-    _videoPlayerController?.removeListener(_videoListener); // Remove listener
+    _videoPlayerController?.removeListener(_videoListener);
     _videoPlayerController?.dispose();
     _videoPlayerController = null;
-    _updateDebounce?.cancel(); // Cancel debounce
+    _updateDebounce?.cancel();
+  }
+
+  Future<void> _applyMpvOptimizations(VideoPlayerController controller) async {
+    try {
+      final player = (controller as dynamic).player;
+      if (player == null) return;
+      final native = player.platform;
+      if (native is NativePlayer) {
+        await native.setProperty('hwdec', 'auto-safe');
+        await native.setProperty('cache', 'yes');
+        await native.setProperty('demuxer-max-bytes', '50MiB');
+        await native.setProperty('demuxer-max-back-bytes', '25MiB');
+        await native.setProperty('network-timeout', '10');
+        await native.setProperty('video-sync', 'display-resample');
+        debugPrint('mpv 4K优化参数已应用');
+      }
+    } catch (e) {
+      debugPrint('mpv优化参数设置失败（非致命）: $e');
+    }
   }
 
   @override

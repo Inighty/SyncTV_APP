@@ -46,6 +46,7 @@ dependencies:
   path_provider: ^2.1.5
   xml: ^6.6.1
   canvas_danmaku: ^0.2.7  # 高性能弹幕库
+  media_kit: ^1.1.11
   video_player_media_kit: ^2.0.0
   media_kit_libs_android_video: ^1.3.8
   media_kit_libs_ios_video: ^1.1.4
