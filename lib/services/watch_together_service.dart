@@ -13,7 +13,7 @@ class AuthException implements Exception {
 }
 
 class WatchTogetherService {
-  static String _baseUrl = 'https://tv.test.com/api';
+  static String _baseUrl = 'https://testxlight.shuziziyang.com/api';
   static String get baseUrl => _baseUrl;
   static const String _tokenKey = 'synctv_token';
   static const String _baseUrlKey = 'synctv_base_url';
