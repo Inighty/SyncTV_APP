@@ -11,13 +11,16 @@ import 'package:synctv_app/widgets/watch_together_admin_settings.dart';
 import 'package:synctv_app/utils/message_utils.dart';
 import 'package:synctv_app/utils/chat_utils.dart';
 import 'package:synctv_app/theme/app_theme.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:video_player_media_kit/video_player_media_kit.dart';
 import 'package:video_player_android/video_player_android.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await WatchTogetherService.init();
-  // Android 使用原生 ExoPlayer（textureView 模式，默认行为）
+  // media_kit 初始化（large_screen TV 端使用 media_kit Player 直接播放）
+  MediaKit.ensureInitialized();
+  // Android 手机使用原生 ExoPlayer
   if (Platform.isAndroid) {
     AndroidVideoPlayer.registerWith();
   }
