@@ -310,7 +310,6 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
   void _videoListener() {
     if (_isSyncing) return;
     if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) return;
-    if (mounted) setState(() {});
     final ctrl = _videoPlayerController!;
     final isPlaying = ctrl.value.isPlaying;
     final position = ctrl.value.position.inMilliseconds / 1000.0;
@@ -320,6 +319,9 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
     if (isPlaying != _lastPlaying) { _lastPlaying = isPlaying; changed = true; }
     if ((rate - _lastRate).abs() > 0.05) { _lastRate = rate; changed = true; }
     if ((position - _lastPosition).abs() > 2.0) { _lastPosition = position; changed = true; } else { _lastPosition = position; }
+
+    // 仅在播放/暂停状态变化时触发 UI 重建（避免每帧都 setState）
+    if (changed && mounted) setState(() {});
 
     if (changed) {
       if (_updateDebounce?.isActive ?? false) _updateDebounce!.cancel();
@@ -351,19 +353,18 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
           String newUrl = status.movie!.url;
           if (newUrl.startsWith('/')) newUrl = '${WatchTogetherService.baseUrl.replaceAll('/api', '')}$newUrl';
 
-          final isNewMovie = _currentUrl != newUrl;
-          if (isNewMovie) {
+          if (_currentUrl != newUrl) {
             await _initVideo(newUrl, headers: status.movie!.headers);
-          }
-
-          // 初始化后立即同步播放状态
-          if (_videoPlayerController != null && _videoPlayerController!.value.isInitialized) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted && _videoPlayerController != null && _videoPlayerController!.value.isInitialized) {
-                _performSync(status.isPlaying, status.currentTime, status.playbackRate);
-              }
-            });
+            // 新影片：等下一帧渲染完成后再 seek/play，避免黑屏
+            if (mounted && _videoPlayerController != null && _videoPlayerController!.value.isInitialized) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && _videoPlayerController != null && _videoPlayerController!.value.isInitialized) {
+                  _performSync(status.isPlaying, status.currentTime, status.playbackRate);
+                }
+              });
+            }
           } else {
+            // 同一影片：直接同步播放状态
             _performSync(status.isPlaying, status.currentTime, status.playbackRate);
           }
 
@@ -388,12 +389,13 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
           }
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Sync state error: $e');
+    }
   }
 
   Future<void> _initVideo(String url, {Map<String, String>? headers}) async {
     if (url.isEmpty) return;
-    _currentUrl = url;
 
     final newController = VideoPlayerController.networkUrl(
       Uri.parse(url),
@@ -409,6 +411,7 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
       }
 
       _disposeVideoController();
+      _currentUrl = url; // 仅在 initialize 成功后才更新，失败时保留旧值以便重试
       _videoPlayerController = newController;
       _videoPlayerController!.addListener(_videoListener);
       await _videoPlayerController!.setLooping(false);
