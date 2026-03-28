@@ -386,16 +386,20 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
       if (player == null) return;
       final native = player.platform;
       if (native is NativePlayer) {
-        // 硬件解码：自动选择最优解码器（Android MediaCodec / iOS VideoToolbox / Windows D3D11）
-        await native.setProperty('hwdec', 'auto-safe');
+        // 硬件解码：强制使用 MediaCodec（Android TV 最佳兼容性）
+        await native.setProperty('hwdec', 'mediacodec-copy');
         // 增大网络缓冲区，防止 4K 高码率卡顿
         await native.setProperty('cache', 'yes');
-        await native.setProperty('demuxer-max-bytes', '50MiB');
-        await native.setProperty('demuxer-max-back-bytes', '25MiB');
-        // 网络超时设置（毫秒）
+        await native.setProperty('demuxer-max-bytes', '100MiB');
+        await native.setProperty('demuxer-max-back-bytes', '50MiB');
+        // 网络超时
         await native.setProperty('network-timeout', '10');
-        // 视频同步模式：使用显示帧时间，减少卡帧
-        await native.setProperty('video-sync', 'display-resample');
+        // 视频同步：audio 模式最省资源，避免 TV 芯片卡帧
+        await native.setProperty('video-sync', 'audio');
+        // 丢帧策略：轻微卡帧时自动跳帧追赶
+        await native.setProperty('framedrop', 'vo');
+        // 降低视频输出延迟
+        await native.setProperty('video-latency-hacks', 'yes');
         debugPrint('mpv 4K优化参数已应用');
       }
     } catch (e) {

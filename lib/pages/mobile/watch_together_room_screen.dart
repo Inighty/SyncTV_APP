@@ -647,10 +647,11 @@ class _WatchTogetherRoomScreenState extends State<WatchTogetherRoomScreen> with 
       if (native is NativePlayer) {
         await native.setProperty('hwdec', 'auto-safe');
         await native.setProperty('cache', 'yes');
-        await native.setProperty('demuxer-max-bytes', '50MiB');
-        await native.setProperty('demuxer-max-back-bytes', '25MiB');
+        await native.setProperty('demuxer-max-bytes', '100MiB');
+        await native.setProperty('demuxer-max-back-bytes', '50MiB');
         await native.setProperty('network-timeout', '10');
-        await native.setProperty('video-sync', 'display-resample');
+        await native.setProperty('video-sync', 'audio');
+        await native.setProperty('framedrop', 'vo');
         debugPrint('mpv 4K优化参数已应用');
       }
     } catch (e) {
