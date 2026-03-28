@@ -16,10 +16,8 @@ import 'package:video_player_media_kit/video_player_media_kit.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await WatchTogetherService.init();
-  // Android 使用原生 ExoPlayer（TextureView 模式已在 MainActivity 中配置）
-  // 其他平台使用 media_kit 以支持更多格式
   VideoPlayerMediaKit.ensureInitialized(
-    android: false,
+    android: true,
     iOS: true,
     windows: true,
     macOS: true,
