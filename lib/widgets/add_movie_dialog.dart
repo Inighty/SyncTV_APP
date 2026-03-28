@@ -589,7 +589,7 @@ class _AddMovieDialogState extends State<AddMovieDialog> {
                       onPressed: () {
                         _embySearchController.clear();
                         setState(() => _embyKeyword = '');
-                        _loadEmby('/');
+                        _loadEmby(_embyPath); // 恢复当前目录
                       },
                     )
                   : null,
@@ -610,8 +610,9 @@ class _AddMovieDialogState extends State<AddMovieDialog> {
             ),
             onChanged: (value) => setState(() => _embyKeyword = value),
             onSubmitted: (value) {
-              setState(() => _embyKeyword = value);
-              _loadEmby(_embyKeyword.isNotEmpty ? '/' : _embyPath, keyword: value);
+              setState(() => _embyKeyword = value.trim());
+              // 搜索时 path 传空字符串（参考 synctv-web 实现）
+              _loadEmby('', keyword: value.trim());
             },
           ),
         ),
@@ -1082,10 +1083,21 @@ class _AddMovieDialogState extends State<AddMovieDialog> {
     finally { if (mounted) setState(() => _embyLoading = false); }
   }
 
-  void _enterEmbyDir(String name, String pathOrId) => _loadEmby((pathOrId.contains('/') || pathOrId.length > 20) ? pathOrId : (_embyPath.endsWith('/') ? '$_embyPath$name' : '$_embyPath/$name'));
+  void _enterEmbyDir(String name, String pathOrId) {
+    // 进入目录时重置搜索关键字（参考 synctv-web resetKeywords 逻辑）
+    _embySearchController.clear();
+    setState(() => _embyKeyword = '');
+    final path = (pathOrId.contains('/') || pathOrId.length > 20)
+        ? pathOrId
+        : (_embyPath.endsWith('/') ? '$_embyPath$name' : '$_embyPath/$name');
+    _loadEmby(path);
+  }
 
   void _goUpEmby() {
-    if (_embyPath == '/') return;
+    if (_embyPath == '/' || _embyPath == '') return;
+    // 返回上级时也重置搜索关键字
+    _embySearchController.clear();
+    setState(() => _embyKeyword = '');
     final parts = _embyPath.split('/'); parts.removeLast();
     _loadEmby(parts.length == 1 && parts[0] == '' ? '/' : parts.join('/'));
   }
