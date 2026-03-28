@@ -582,8 +582,18 @@ class _LargeScreenHomeState extends State<LargeScreenHome> {
   Widget _buildRoomCard(WRoom room, int index) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cardColor = isDark ? Colors.black : _cardColors[index % _cardColors.length];
-    
+
     return Focus(
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            (event.logicalKey == LogicalKeyboardKey.select ||
+             event.logicalKey == LogicalKeyboardKey.enter ||
+             event.logicalKey == LogicalKeyboardKey.space)) {
+          _handleJoinRoom(room);
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
       child: Builder(
         builder: (context) {
           final hasFocus = Focus.of(context).hasFocus;

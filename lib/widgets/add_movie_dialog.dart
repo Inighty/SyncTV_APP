@@ -54,6 +54,8 @@ class _AddMovieDialogState extends State<AddMovieDialog> {
   String _embyPath = '/';
   List<dynamic> _embyFiles = [];
   bool _embyLoading = false;
+  final TextEditingController _embySearchController = TextEditingController();
+  String _embyKeyword = '';
   
   List<String> _boundVendors = [];
   bool _checkingVendors = true;
@@ -79,6 +81,7 @@ class _AddMovieDialogState extends State<AddMovieDialog> {
     _urlController.dispose();
     _nameController.dispose();
     _biliUrlController.dispose();
+    _embySearchController.dispose();
     super.dispose();
   }
 
@@ -572,27 +575,83 @@ class _AddMovieDialogState extends State<AddMovieDialog> {
 
     return Column(
       children: [
-        _buildPathBar(theme, _embyPath, _goUpEmby),
+        // 搜索框
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+          child: TextField(
+            controller: _embySearchController,
+            decoration: InputDecoration(
+              hintText: '搜索 Emby 媒体...',
+              prefixIcon: Icon(Icons.search, color: theme.primaryColor),
+              suffixIcon: _embyKeyword.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _embySearchController.clear();
+                        setState(() => _embyKeyword = '');
+                        _loadEmby('/');
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: theme.cardColor,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: theme.dividerColor.withOpacity(0.1)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: theme.primaryColor, width: 1.5),
+              ),
+            ),
+            onChanged: (value) => setState(() => _embyKeyword = value),
+            onSubmitted: (value) {
+              setState(() => _embyKeyword = value);
+              _loadEmby(_embyKeyword.isNotEmpty ? '/' : _embyPath, keyword: value);
+            },
+          ),
+        ),
+        // 路径栏（搜索时隐藏）
+        if (_embyKeyword.isEmpty)
+          _buildPathBar(theme, _embyPath, _goUpEmby),
         Expanded(
           child: _embyLoading
             ? const Center(child: CircularProgressIndicator())
-            : ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                itemCount: _embyFiles.length,
-                itemBuilder: (context, index) {
-                  final file = _embyFiles[index];
-                  final isDir = file['isDir'] == true || file['is_dir'] == true || file['Type'] == 'Folder' || file['CollectionType'] != null;
-                  final name = file['name'] ?? file['Name'] ?? 'Unknown';
-                  return _buildFileItem(
-                    theme,
-                    name,
-                    isDir,
-                    () => isDir ? _enterEmbyDir(name, file['path'] ?? file['Id'] ?? name) : _addEmbyFile(file),
-                    subtitle: isDir ? null : 'Emby Media',
-                    iconColor: Colors.green,
-                  );
-                },
-              ),
+            : _embyFiles.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.search_off, size: 48, color: theme.disabledColor),
+                      const SizedBox(height: 12),
+                      Text(
+                        _embyKeyword.isNotEmpty ? '未找到相关媒体' : '暂无内容',
+                        style: TextStyle(color: theme.disabledColor),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  itemCount: _embyFiles.length,
+                  itemBuilder: (context, index) {
+                    final file = _embyFiles[index];
+                    final isDir = file['isDir'] == true || file['is_dir'] == true || file['Type'] == 'Folder' || file['CollectionType'] != null;
+                    final name = file['name'] ?? file['Name'] ?? 'Unknown';
+                    return _buildFileItem(
+                      theme,
+                      name,
+                      isDir,
+                      () => isDir ? _enterEmbyDir(name, file['path'] ?? file['Id'] ?? name) : _addEmbyFile(file),
+                      subtitle: isDir ? null : 'Emby Media',
+                      iconColor: Colors.green,
+                    );
+                  },
+                ),
         ),
       ],
     );
@@ -997,10 +1056,10 @@ class _AddMovieDialogState extends State<AddMovieDialog> {
     }
   }
 
-  Future<void> _loadEmby(String path) async {
+  Future<void> _loadEmby(String path, {String? keyword}) async {
     setState(() { _embyLoading = true; _embyPath = path; });
     try {
-      final data = await WatchTogetherService.listEmby(path);
+      final data = await WatchTogetherService.listEmby(path, keyword: keyword?.isNotEmpty == true ? keyword : null);
       if (mounted) {
         setState(() {
           if (data is List) {

@@ -132,7 +132,7 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
   Future<void> _joinRoom() async {
     _connectWebSocket();
     _syncState();
-    Future.wait([
+    await Future.wait([
       _fetchCurrentUser(),
       _fetchMembers(),
       _fetchMovies(),
@@ -199,15 +199,21 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
       
       _channel = IOWebSocketChannel.connect(wsUrl, protocols: [token]);
       _channel!.stream.listen((data) {
-        _reconnectAttempts = 0; 
+        _reconnectAttempts = 0;
         if (data is Uint8List || data is List<int>) {
            try {
              final message = SimpleProto.decode(data is Uint8List ? data : Uint8List.fromList(data));
              _handleWebSocketMessage(message);
-           } catch (_) {}
+           } catch (e) {
+             debugPrint('WebSocket消息解析失败: $e');
+           }
         }
-      }, onError: (_) => _scheduleReconnect(), onDone: _scheduleReconnect);
-    } catch (_) {
+      }, onError: (e) {
+        debugPrint('WebSocket连接错误: $e');
+        _scheduleReconnect();
+      }, onDone: _scheduleReconnect);
+    } catch (e) {
+      debugPrint('WebSocket连接失败: $e');
       _scheduleReconnect();
     }
   }
