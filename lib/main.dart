@@ -16,10 +16,8 @@ import 'package:video_player_media_kit/video_player_media_kit.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await WatchTogetherService.init();
-  // Android 使用原生 ExoPlayer 以获得更好的 4K 硬解支持
-  // 其他平台使用 media_kit 以支持更多格式
   VideoPlayerMediaKit.ensureInitialized(
-    android: false,  // Android 保持原生 ExoPlayer
+    android: true,
     iOS: true,
     windows: true,
     macOS: true,
