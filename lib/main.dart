@@ -12,12 +12,17 @@ import 'package:synctv_app/utils/message_utils.dart';
 import 'package:synctv_app/utils/chat_utils.dart';
 import 'package:synctv_app/theme/app_theme.dart';
 import 'package:video_player_media_kit/video_player_media_kit.dart';
+import 'package:video_player_android/video_player_android.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await WatchTogetherService.init();
+  // Android 使用原生 ExoPlayer（textureView 模式，默认行为）
+  if (Platform.isAndroid) {
+    AndroidVideoPlayer.registerWith();
+  }
   VideoPlayerMediaKit.ensureInitialized(
-    android: true,
+    android: false, // Android 使用原生 ExoPlayer
     iOS: true,
     windows: true,
     macOS: true,
