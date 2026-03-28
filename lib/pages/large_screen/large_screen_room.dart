@@ -3,8 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
+import 'package:better_player_plus/better_player_plus.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:synctv_app/models/watch_together_models.dart';
@@ -25,14 +24,8 @@ class LargeScreenRoom extends StatefulWidget {
 }
 
 class _LargeScreenRoomState extends State<LargeScreenRoom> {
-  // media_kit 播放器（Android TV 上唯一可靠方案）
-  late final Player _player = Player();
-  late final VideoController _videoController = VideoController(
-    _player,
-    configuration: const VideoControllerConfiguration(
-      enableHardwareAcceleration: true,
-    ),
-  );
+  // BetterPlayer（基于 ExoPlayer，解决 Android TV 画面问题）
+  BetterPlayerController? _betterPlayerController;
   String _currentUrl = '';
   final ScrollController _chatScrollController = ScrollController();
   final ScrollController _movieScrollController = ScrollController();
@@ -133,11 +126,6 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
       },
     );
     
-    // 监听 media_kit Player 状态变化
-    _player.stream.playing.listen((_) => _videoListener());
-    _player.stream.position.listen((_) => _videoListener());
-    _player.stream.rate.listen((_) => _videoListener());
-
     _joinRoom();
   }
 
@@ -246,7 +234,10 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
       
       // TV Danmaku
       if (_currentUrl.isNotEmpty) {
-        final pos = _player.state.position;
+        Duration pos = Duration.zero;
+        try {
+          pos = _betterPlayerController?.videoPlayerController?.value.position ?? Duration.zero;
+        } catch (_) {}
         final danmaku = DanmakuItem(
           text: '$username: $content',
           startTime: pos,
@@ -290,26 +281,29 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
   }
 
   Future<void> _performSync(bool isPlaying, double currentTime, double playbackRate) async {
-    if (_currentUrl.isEmpty) return;
+    if (_betterPlayerController == null) return;
     _isSyncing = true;
     try {
+      final ctrl = _betterPlayerController!;
       // 调整倍速
-      if ((_player.state.rate - playbackRate).abs() > 0.05) {
-        await _player.setRate(playbackRate);
+      if ((_lastRate - playbackRate).abs() > 0.05) {
+        ctrl.setSpeed(playbackRate);
         _lastRate = playbackRate;
       }
       // seek（误差超过2秒才 seek）
-      final currentPos = _player.state.position.inMilliseconds / 1000.0;
+      final posMs = await ctrl.videoPlayerController?.position;
+      final currentPos = (posMs?.inMilliseconds ?? 0) / 1000.0;
       if ((currentPos - currentTime).abs() > 2.0) {
-        await _player.seek(Duration(milliseconds: (currentTime * 1000).toInt()));
+        ctrl.seekTo(Duration(milliseconds: (currentTime * 1000).toInt()));
         _lastPosition = currentTime;
       }
       // 暂停 / 播放
-      if (!isPlaying && _player.state.playing) {
-        await _player.pause();
+      final playing = ctrl.isPlaying() ?? false;
+      if (!isPlaying && playing) {
+        ctrl.pause();
         _lastPlaying = false;
-      } else if (isPlaying && !_player.state.playing) {
-        await _player.play();
+      } else if (isPlaying && !playing) {
+        ctrl.play();
         _lastPlaying = true;
       }
     } catch (_) {} finally {
@@ -319,15 +313,17 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
     }
   }
 
-  void _videoListener() {
+  void _videoListener(BetterPlayerEvent event) {
     if (_isSyncing) return;
-    if (_currentUrl.isEmpty) return;
-    final isPlaying = _player.state.playing;
-    final position = _player.state.position.inMilliseconds / 1000.0;
-    final rate = _player.state.rate;
+    if (_betterPlayerController == null) return;
+    final ctrl = _betterPlayerController!;
+    final playing = ctrl.isPlaying() ?? false;
+    final posMs = ctrl.videoPlayerController?.value.position;
+    final position = (posMs?.inMilliseconds ?? 0) / 1000.0;
+    final rate = _lastRate; // better_player 不暴露当前速度，使用缓存值
 
     bool changed = false;
-    if (isPlaying != _lastPlaying) { _lastPlaying = isPlaying; changed = true; }
+    if (playing != _lastPlaying) { _lastPlaying = playing; changed = true; }
     if ((rate - _lastRate).abs() > 0.05) { _lastRate = rate; changed = true; }
     if ((position - _lastPosition).abs() > 2.0) { _lastPosition = position; changed = true; } else { _lastPosition = position; }
 
@@ -338,7 +334,7 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
       if (_updateDebounce?.isActive ?? false) _updateDebounce!.cancel();
       _updateDebounce = Timer(const Duration(milliseconds: 1000), () {
         if (mounted && !_isSyncing) {
-          _sendStatus(isPlaying, position, rate);
+          _sendStatus(playing, position, rate);
         }
       });
     }
@@ -388,11 +384,11 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
           _danmakuController.updateConfig(
             danmakuUrl: danmuUrl,
             streamDanmakuUrl: streamUrl,
-            controller: null, // media_kit 不使用 VideoPlayerController
+            controller: null, // better_player 不使用 VideoPlayerController
           );
         } else {
           if (_currentUrl.isNotEmpty) {
-            await _player.stop();
+            _disposeVideoController();
             _currentUrl = '';
             setState(() {});
           }
@@ -406,46 +402,46 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
   Future<void> _initVideo(String url, {Map<String, String>? headers}) async {
     if (url.isEmpty) return;
     try {
-      await _player.open(
-        Media(url, httpHeaders: headers ?? {}),
-        play: false, // 不立即播放，等 _performSync 决定
+      _disposeVideoController();
+
+      final dataSource = BetterPlayerDataSource(
+        BetterPlayerDataSourceType.network,
+        url,
+        headers: headers,
+        videoFormat: BetterPlayerVideoFormat.other,
       );
-      await _applyMpvOptimizations();
-      _currentUrl = url; // 仅在 open 成功后才更新
+
+      _betterPlayerController = BetterPlayerController(
+        const BetterPlayerConfiguration(
+          autoPlay: false, // 等 _performSync 决定
+          looping: false,
+          handleLifecycle: false,
+          controlsConfiguration: BetterPlayerControlsConfiguration(
+            showControls: false, // TV 端用自定义控制
+          ),
+          fit: BoxFit.contain,
+        ),
+        betterPlayerDataSource: dataSource,
+      );
+
+      _betterPlayerController!.addEventsListener(_videoListener);
+      _currentUrl = url;
       if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Video init error: $e');
     }
   }
 
-  /// mpv 硬解优化参数（Android TV 4K 性能关键）
-  Future<void> _applyMpvOptimizations() async {
-    try {
-      final native = _player.platform;
-      if (native is NativePlayer) {
-        await native.setProperty('hwdec', 'mediacodec-copy');
-        await native.setProperty('cache', 'yes');
-        await native.setProperty('demuxer-max-bytes', '100MiB');
-        await native.setProperty('demuxer-max-back-bytes', '50MiB');
-        await native.setProperty('network-timeout', '10');
-        await native.setProperty('video-sync', 'audio');
-        await native.setProperty('framedrop', 'vo');
-        debugPrint('mpv 4K优化参数已应用');
-      }
-    } catch (e) {
-      debugPrint('mpv优化参数设置失败: $e');
-    }
-  }
-
   void _disposeVideoController() {
     _updateDebounce?.cancel();
+    _betterPlayerController?.dispose();
+    _betterPlayerController = null;
   }
 
   @override
   void dispose() {
     _authErrorSubscription?.cancel();
     _disposeVideoController();
-    _player.dispose();
     _syncTimer?.cancel();
     _channel?.sink.close();
     _chatScrollController.dispose();
@@ -530,10 +526,10 @@ class _LargeScreenRoomState extends State<LargeScreenRoom> {
                 // Main Video Area
                 Positioned.fill(
                   child: Center(
-                    child: _currentUrl.isNotEmpty
-                        ? Video(
-                            controller: _videoController,
-                            controls: NoVideoControls,
+                    child: _currentUrl.isNotEmpty && _betterPlayerController != null
+                        ? AspectRatio(
+                            aspectRatio: 16 / 9,
+                            child: BetterPlayer(controller: _betterPlayerController!),
                           )
                         : const Column(
                             mainAxisAlignment: MainAxisAlignment.center,

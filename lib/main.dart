@@ -18,7 +18,7 @@ import 'package:video_player_android/video_player_android.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await WatchTogetherService.init();
-  // media_kit 初始化（large_screen TV 端使用 media_kit Player 直接播放）
+  // media_kit 初始化（iOS/Windows/macOS/Linux 平台 video_player_media_kit 所需）
   MediaKit.ensureInitialized();
   // Android 手机使用原生 ExoPlayer
   if (Platform.isAndroid) {
